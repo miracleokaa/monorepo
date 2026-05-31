@@ -5,10 +5,13 @@ import { Footer } from '@/components/footer'
 import { Toaster } from '@/components/ui/toaster'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { NetworkStatusBanner } from '@/components/network-status-banner'
+import SkipLink from '@/components/SkipLink'
 import { ServiceWorkerRegister } from '@/components/service-worker-register'
-import { WebVitalsReporter } from '@/components/web-vitals-reporter'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 import { PerformanceMonitor } from '@/components/PerformanceMonitor'
 import { ThemeProvider } from '@/components/theme-provider'
+import { CurrencyProvider } from '@/contexts/CurrencyContext'
+import { WalletProvider } from '@/contexts/WalletContext'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 
@@ -46,16 +49,22 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <ErrorBoundary>
-            <ServiceWorkerRegister />
-            <WebVitalsReporter />
-            <PerformanceMonitor />
-            <NetworkStatusBanner />
-            <Header />
-            {children}
-            <Footer />
-            <Toaster />
-          </ErrorBoundary>
+          <CurrencyProvider>
+            <WalletProvider>
+            <ErrorBoundary>
+              <ServiceWorkerRegister />
+              <SpeedInsights />
+              <PerformanceMonitor />
+              <NetworkStatusBanner />
+              <SkipLink />
+              <Header />
+              <div id="main-content" />
+              {children}
+              <Footer />
+              <Toaster />
+            </ErrorBoundary>
+            </WalletProvider>
+          </CurrencyProvider>
         </ThemeProvider>
       </body>
     </html>

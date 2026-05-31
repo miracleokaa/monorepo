@@ -7,6 +7,9 @@ import { Home } from "lucide-react"
 import BackendHealthCompact from "@/components/BackendHealthCompact"
 import { MobileMenu } from "@/components/ui/mobile-menu"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { CurrencyToggle } from "@/components/currency-toggle"
+import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton"
+import { NotificationBell } from "@/components/layout/NotificationBell"
 
 const navLinks = [
   { href: "/properties", label: "Find a Home" },
@@ -53,7 +56,10 @@ export function Header() {
 
           {/* Desktop Actions */}
           <div className="hidden lg:flex items-center gap-3">
+            <CurrencyToggle />
             <ThemeToggle />
+            <NotificationBell />
+            <ConnectWalletButton />
             <div className="hidden xl:block">
               <BackendHealthCompact />
             </div>

@@ -29,6 +29,7 @@ pub enum DataKey {
     DealBalance(String),
     DealDepositor(String),
     DealState(String),
+    DealLifecycle(String),
     PendingRentRelease(String),
     RentDispute(String),
     LegacyLockedAmountV2(String),
@@ -66,21 +67,36 @@ pub enum ContractError {
     UpgradeAlreadyPending = 7,
     NoUpgradePending = 8,
     UpgradeDelayNotMet = 9,
-    InvalidSchemaVersion = 11,
-    MigrationInvariantViolation = 12,
-    MigrationNotRequired = 13,
-    PendingReleaseExists = 14,
-    NoPendingRelease = 15,
-    InvalidReleaseWindow = 16,
-    NoOpenDispute = 17,
+    InvalidSplit = 11,
+    // Circuit breaker states
+    Frozen = 12,
+    RecoveryDelayNotMet = 13,
+    // Release window & schema
+    InvalidReleaseWindow = 14,
+    InvalidSchemaVersion = 15,
+    // Pending release lifecycle
+    PendingReleaseExists = 16,
+    NoPendingRelease = 17,
+    // Dispute errors
     DisputeNotAllowed = 18,
-    InvalidEvidenceRef = 19,
+    NoOpenDispute = 19,
     InvalidSettlement = 20,
-    // Circuit breaker errors (#393)
-    Frozen = 21,
-    DrainRestricted = 22,
-    InvalidGovernanceDrain = 23,
-    RecoveryDelayNotMet = 24,
+    // Governance drain
+    InvalidGovernanceDrain = 21,
+    // Migration / data invariants
+    MigrationInvariantViolation = 22,
+    // Deal lifecycle (#974)
+    InvalidDealTransition = 23,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[repr(u32)]
+pub enum DealLifecycleStatus {
+    Draft = 0,
+    Active = 1,
+    Completed = 2,
+    Defaulted = 3,
 }
 
 #[contracttype]
@@ -472,6 +488,11 @@ impl DealEscrow {
         caller: Address,
         deal_id: String,
         to: Address,
+        principal_amount: i128,
+        platform_addr: Address,
+        platform_amount: i128,
+        reporter_addr: Address,
+        reporter_amount: i128,
         external_ref_source: Symbol,
         external_ref: String,
     ) -> Result<i128, ContractError> {
@@ -485,11 +506,20 @@ impl DealEscrow {
             &env, &admin, &operator, &caller, "release",
         )?;
 
+        if principal_amount < 0 || platform_amount < 0 || reporter_amount < 0 {
+            return Err(ContractError::InvalidAmount);
+        }
+
         // #386: per-key persistent storage
         let cur = get_deal_balance(&env, &deal_id);
         if cur <= 0 {
             return Err(ContractError::InsufficientBalance);
         }
+
+        if principal_amount + platform_amount + reporter_amount != cur {
+            return Err(ContractError::InvalidSplit);
+        }
+
         let token_addr = get_token(&env);
         let token_client = TokenClient::new(&env, &token_addr);
 
@@ -505,7 +535,23 @@ impl DealEscrow {
 
         // #390: reentrancy guard before external token call
         enter_nonreentrant(&env)?;
-        token_client.transfer(&env.current_contract_address(), &to, &cur);
+        if principal_amount > 0 {
+            token_client.transfer(&env.current_contract_address(), &to, &principal_amount);
+        }
+        if platform_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &platform_addr,
+                &platform_amount,
+            );
+        }
+        if reporter_amount > 0 {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &reporter_addr,
+                &reporter_amount,
+            );
+        }
         exit_nonreentrant(&env);
 
         env.events().publish(
@@ -513,7 +559,17 @@ impl DealEscrow {
                 Symbol::new(&env, "deal_escrow"),
                 Symbol::new(&env, "release"),
             ),
-            (deal_id, to, cur, external_ref_source, tx_id),
+            (
+                deal_id,
+                to,
+                principal_amount,
+                platform_addr,
+                platform_amount,
+                reporter_addr,
+                reporter_amount,
+                external_ref_source,
+                tx_id,
+            ),
         );
         Ok(cur)
     }
@@ -1214,9 +1270,95 @@ impl DealEscrow {
             .get::<_, bool>(&DataKey::Paused)
             .unwrap_or(false)
     }
+
+    fn get_deal_lifecycle(env: &Env, deal_id: &String) -> DealLifecycleStatus {
+        env.storage()
+            .persistent()
+            .get::<_, DealLifecycleStatus>(&DataKey::DealLifecycle(deal_id.clone()))
+            .unwrap_or(DealLifecycleStatus::Draft)
+    }
+
+    fn set_deal_lifecycle(env: &Env, deal_id: &String, status: DealLifecycleStatus) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::DealLifecycle(deal_id.clone()), &status);
+    }
+
+    /// Admin-only: activate a deal on-chain (draft → active).
+    pub fn activate_deal(env: Env, admin: Address, deal_id: String) -> Result<(), ContractError> {
+        require_not_paused(&env)?;
+        validation::require_non_empty_string(&env, &deal_id)?;
+        let current_admin = get_admin(&env);
+        access_control::require_admin_permission(&env, &current_admin, &admin, "activate_deal")?;
+
+        let current = Self::get_deal_lifecycle(&env, &deal_id);
+        if current != DealLifecycleStatus::Draft {
+            return Err(ContractError::InvalidDealTransition);
+        }
+        Self::set_deal_lifecycle(&env, &deal_id, DealLifecycleStatus::Active);
+        env.events().publish(
+            (
+                Symbol::new(&env, "deal_escrow"),
+                Symbol::new(&env, "activate_deal"),
+            ),
+            (deal_id, admin),
+        );
+        Ok(())
+    }
+
+    /// Admin-only: mark a deal completed on-chain.
+    pub fn complete_deal(env: Env, admin: Address, deal_id: String) -> Result<(), ContractError> {
+        require_not_paused(&env)?;
+        validation::require_non_empty_string(&env, &deal_id)?;
+        let current_admin = get_admin(&env);
+        access_control::require_admin_permission(&env, &current_admin, &admin, "complete_deal")?;
+
+        let current = Self::get_deal_lifecycle(&env, &deal_id);
+        if current != DealLifecycleStatus::Active {
+            return Err(ContractError::InvalidDealTransition);
+        }
+        Self::set_deal_lifecycle(&env, &deal_id, DealLifecycleStatus::Completed);
+        env.events().publish(
+            (
+                Symbol::new(&env, "deal_escrow"),
+                Symbol::new(&env, "complete_deal"),
+            ),
+            (deal_id, admin),
+        );
+        Ok(())
+    }
+
+    /// Admin-only: mark a deal defaulted on-chain.
+    pub fn default_deal(env: Env, admin: Address, deal_id: String) -> Result<(), ContractError> {
+        require_not_paused(&env)?;
+        validation::require_non_empty_string(&env, &deal_id)?;
+        let current_admin = get_admin(&env);
+        access_control::require_admin_permission(&env, &current_admin, &admin, "default_deal")?;
+
+        let current = Self::get_deal_lifecycle(&env, &deal_id);
+        if current != DealLifecycleStatus::Active {
+            return Err(ContractError::InvalidDealTransition);
+        }
+        Self::set_deal_lifecycle(&env, &deal_id, DealLifecycleStatus::Defaulted);
+        env.events().publish(
+            (
+                Symbol::new(&env, "deal_escrow"),
+                Symbol::new(&env, "default_deal"),
+            ),
+            (deal_id, admin),
+        );
+        Ok(())
+    }
+
+    pub fn deal_lifecycle_status(env: Env, deal_id: String) -> DealLifecycleStatus {
+        Self::get_deal_lifecycle(&env, &deal_id)
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod cross_contract_integration_tests;
 
 #[cfg(test)]
 mod test {
@@ -1224,6 +1366,7 @@ mod test {
     use super::{
         ContractError, DataKey, DealEscrow, DealEscrowClient, SettlementOutcome, TokenClient,
     };
+    use soroban_pausable::PausableError;
     use soroban_sdk::testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke};
     use soroban_sdk::token::StellarAssetClient;
     use soroban_sdk::{Address, BytesN, Env, IntoVal, String, Symbol};
@@ -1351,6 +1494,8 @@ mod test {
         let (contract_id, client, admin, operator, token, token_admin, _rcpt) = setup(&env);
         let from = Address::generate(&env);
         let to = Address::generate(&env);
+        let platform_addr = Address::generate(&env);
+        let reporter_addr = Address::generate(&env);
         let token_client = TokenClient::new(&env, &token);
         let token_sac = StellarAssetClient::new(&env, &token);
         let deal_id = String::from_str(&env, "deal-2");
@@ -1391,6 +1536,11 @@ mod test {
                     operator.clone(),
                     deal_id.clone(),
                     to.clone(),
+                    200i128,
+                    platform_addr.clone(),
+                    30i128,
+                    reporter_addr.clone(),
+                    20i128,
                     Symbol::new(&env, "manual_admin"),
                     String::from_str(&env, "ext1"),
                 )
@@ -1403,14 +1553,23 @@ mod test {
                 &operator,
                 &deal_id,
                 &to,
+                &200i128,
+                &platform_addr,
+                &30i128,
+                &reporter_addr,
+                &20i128,
                 &Symbol::new(&env, "manual_admin"),
                 &String::from_str(&env, "ext1"),
             )
             .unwrap()
             .unwrap();
         assert_eq!(released, 250i128);
-        assert_eq!(token_client.balance(&to), 250i128);
+        assert_eq!(token_client.balance(&to), 200i128);
+        assert_eq!(token_client.balance(&platform_addr), 30i128);
+        assert_eq!(token_client.balance(&reporter_addr), 20i128);
         assert_eq!(client.balance(&deal_id), 0i128);
+
+        // Attempting to release again should fail with InsufficientBalance
         env.mock_auths(&[MockAuth {
             address: &admin,
             invoke: &MockAuthInvoke {
@@ -1420,6 +1579,11 @@ mod test {
                     admin.clone(),
                     deal_id.clone(),
                     to.clone(),
+                    0i128,
+                    platform_addr.clone(),
+                    0i128,
+                    reporter_addr.clone(),
+                    0i128,
                     Symbol::new(&env, "manual_admin"),
                     String::from_str(&env, "ext2"),
                 )
@@ -1432,12 +1596,96 @@ mod test {
                 &admin,
                 &deal_id,
                 &to,
+                &0i128,
+                &platform_addr,
+                &0i128,
+                &reporter_addr,
+                &0i128,
                 &Symbol::new(&env, "manual_admin"),
                 &String::from_str(&env, "ext2"),
             )
             .unwrap_err()
             .unwrap();
         assert_eq!(err, ContractError::InsufficientBalance);
+    }
+
+    #[test]
+    fn release_fails_if_split_sum_invalid() {
+        let env = Env::default();
+        let (contract_id, client, _admin, operator, token, token_admin, _rcpt) = setup(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        let platform_addr = Address::generate(&env);
+        let reporter_addr = Address::generate(&env);
+        let token_sac = StellarAssetClient::new(&env, &token);
+        let deal_id = String::from_str(&env, "deal-bad");
+        env.mock_auths(&[MockAuth {
+            address: &token_admin,
+            invoke: &MockAuthInvoke {
+                contract: &token,
+                fn_name: "mint",
+                args: (from.clone(), 300i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        token_sac.mint(&from, &300i128);
+
+        env.mock_auths(&[MockAuth {
+            address: &from,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "deposit",
+                args: (from.clone(), deal_id.clone(), 250i128).into_val(&env),
+                sub_invokes: &[MockAuthInvoke {
+                    contract: &token,
+                    fn_name: "transfer",
+                    args: (from.clone(), contract_id.clone(), 250i128).into_val(&env),
+                    sub_invokes: &[],
+                }],
+            },
+        }]);
+        client
+            .try_deposit(&from, &deal_id, &250i128)
+            .unwrap()
+            .unwrap();
+
+        env.mock_auths(&[MockAuth {
+            address: &operator,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "release",
+                args: (
+                    operator.clone(),
+                    deal_id.clone(),
+                    to.clone(),
+                    200i128,
+                    platform_addr.clone(),
+                    30i128,
+                    reporter_addr.clone(),
+                    10i128,
+                    Symbol::new(&env, "manual_admin"),
+                    String::from_str(&env, "ext1"),
+                )
+                    .into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        let err = client
+            .try_release(
+                &operator,
+                &deal_id,
+                &to,
+                &200i128,
+                &platform_addr,
+                &30i128,
+                &reporter_addr,
+                &10i128,
+                &Symbol::new(&env, "manual_admin"),
+                &String::from_str(&env, "ext1"),
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, ContractError::InvalidSplit);
     }
 
     #[test]
@@ -1484,12 +1732,323 @@ mod test {
     }
 
     #[test]
+    fn deposit_zero_amount_panics() {
+        let env = Env::default();
+        let (contract_id, client, _admin, _operator, _token, _token_admin, _rcpt) = setup(&env);
+        let from = Address::generate(&env);
+        let deal_id = String::from_str(&env, "deal-zero");
+        env.mock_auths(&[MockAuth {
+            address: &from,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "deposit",
+                args: (from.clone(), deal_id.clone(), 0i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        let err = client
+            .try_deposit(&from, &deal_id, &0i128)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, ContractError::InvalidAmount);
+    }
+
+    #[test]
+    fn multiple_deposits_accumulate() {
+        let env = Env::default();
+        let (contract_id, client, _admin, _operator, token, token_admin, _rcpt) = setup(&env);
+        let from = Address::generate(&env);
+        let token_sac = StellarAssetClient::new(&env, &token);
+        let deal_id = String::from_str(&env, "deal-multi");
+        env.mock_auths(&[MockAuth {
+            address: &token_admin,
+            invoke: &MockAuthInvoke {
+                contract: &token,
+                fn_name: "mint",
+                args: (from.clone(), 500i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        token_sac.mint(&from, &500i128);
+
+        for amount in [100i128, 150i128] {
+            env.mock_auths(&[MockAuth {
+                address: &from,
+                invoke: &MockAuthInvoke {
+                    contract: &contract_id,
+                    fn_name: "deposit",
+                    args: (from.clone(), deal_id.clone(), amount).into_val(&env),
+                    sub_invokes: &[MockAuthInvoke {
+                        contract: &token,
+                        fn_name: "transfer",
+                        args: (from.clone(), contract_id.clone(), amount).into_val(&env),
+                        sub_invokes: &[],
+                    }],
+                },
+            }]);
+            client
+                .try_deposit(&from, &deal_id, &amount)
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(client.balance(&deal_id), 250i128);
+    }
+
+    #[test]
+    fn balance_unknown_deal_returns_zero() {
+        let env = Env::default();
+        let (_contract_id, client, _admin, _operator, _token, _token_admin, _rcpt) = setup(&env);
+        let deal_id = String::from_str(&env, "nonexistent-deal");
+        assert_eq!(client.balance(&deal_id), 0i128);
+    }
+
+    #[test]
+    fn pause_non_admin_panics() {
+        let env = Env::default();
+        let (contract_id, client, _admin, _operator, _token, _token_admin, _rcpt) = setup(&env);
+        let stranger = Address::generate(&env);
+        env.mock_auths(&[MockAuth {
+            address: &stranger,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "pause",
+                args: (stranger.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        let err = client.try_pause(&stranger).unwrap_err().unwrap();
+        assert_eq!(err, PausableError::NotAuthorized);
+    }
+
+    #[test]
+    fn unpause_allows_deposit_after_pause() {
+        let env = Env::default();
+        let (contract_id, client, admin, _operator, token, token_admin, _rcpt) = setup(&env);
+        let from = Address::generate(&env);
+        let token_sac = StellarAssetClient::new(&env, &token);
+        let deal_id = String::from_str(&env, "deal-unpause");
+        env.mock_auths(&[MockAuth {
+            address: &token_admin,
+            invoke: &MockAuthInvoke {
+                contract: &token,
+                fn_name: "mint",
+                args: (from.clone(), 100i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        token_sac.mint(&from, &100i128);
+
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "pause",
+                args: (admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.try_pause(&admin).unwrap().unwrap();
+        assert!(client.is_paused());
+
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "unpause",
+                args: (admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        client.try_unpause(&admin).unwrap().unwrap();
+        assert!(!client.is_paused());
+
+        env.mock_auths(&[MockAuth {
+            address: &from,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "deposit",
+                args: (from.clone(), deal_id.clone(), 40i128).into_val(&env),
+                sub_invokes: &[MockAuthInvoke {
+                    contract: &token,
+                    fn_name: "transfer",
+                    args: (from.clone(), contract_id.clone(), 40i128).into_val(&env),
+                    sub_invokes: &[],
+                }],
+            },
+        }]);
+        client
+            .try_deposit(&from, &deal_id, &40i128)
+            .unwrap()
+            .unwrap();
+        assert_eq!(client.balance(&deal_id), 40i128);
+    }
+
+    #[test]
+    fn release_by_admin_succeeds() {
+        let env = Env::default();
+        let (contract_id, client, admin, _operator, token, token_admin, _rcpt) = setup(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        let platform_addr = Address::generate(&env);
+        let reporter_addr = Address::generate(&env);
+        let token_sac = StellarAssetClient::new(&env, &token);
+        let deal_id = String::from_str(&env, "deal-admin-release");
+        env.mock_auths(&[MockAuth {
+            address: &token_admin,
+            invoke: &MockAuthInvoke {
+                contract: &token,
+                fn_name: "mint",
+                args: (from.clone(), 100i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        token_sac.mint(&from, &100i128);
+        env.mock_auths(&[MockAuth {
+            address: &from,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "deposit",
+                args: (from.clone(), deal_id.clone(), 100i128).into_val(&env),
+                sub_invokes: &[MockAuthInvoke {
+                    contract: &token,
+                    fn_name: "transfer",
+                    args: (from.clone(), contract_id.clone(), 100i128).into_val(&env),
+                    sub_invokes: &[],
+                }],
+            },
+        }]);
+        client
+            .try_deposit(&from, &deal_id, &100i128)
+            .unwrap()
+            .unwrap();
+
+        env.mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "release",
+                args: (
+                    admin.clone(),
+                    deal_id.clone(),
+                    to.clone(),
+                    80i128,
+                    platform_addr.clone(),
+                    15i128,
+                    reporter_addr.clone(),
+                    5i128,
+                    Symbol::new(&env, "manual_admin"),
+                    String::from_str(&env, "admin-rel"),
+                )
+                    .into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        let released = client
+            .try_release(
+                &admin,
+                &deal_id,
+                &to,
+                &80i128,
+                &platform_addr,
+                &15i128,
+                &reporter_addr,
+                &5i128,
+                &Symbol::new(&env, "manual_admin"),
+                &String::from_str(&env, "admin-rel"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(released, 100i128);
+        assert_eq!(client.balance(&deal_id), 0i128);
+    }
+
+    #[test]
+    fn release_insufficient_balance_when_split_exceeds_escrow() {
+        let env = Env::default();
+        let (contract_id, client, _admin, operator, token, token_admin, _rcpt) = setup(&env);
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        let platform_addr = Address::generate(&env);
+        let reporter_addr = Address::generate(&env);
+        let token_sac = StellarAssetClient::new(&env, &token);
+        let deal_id = String::from_str(&env, "deal-insuff");
+        env.mock_auths(&[MockAuth {
+            address: &token_admin,
+            invoke: &MockAuthInvoke {
+                contract: &token,
+                fn_name: "mint",
+                args: (from.clone(), 50i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        token_sac.mint(&from, &50i128);
+        env.mock_auths(&[MockAuth {
+            address: &from,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "deposit",
+                args: (from.clone(), deal_id.clone(), 50i128).into_val(&env),
+                sub_invokes: &[MockAuthInvoke {
+                    contract: &token,
+                    fn_name: "transfer",
+                    args: (from.clone(), contract_id.clone(), 50i128).into_val(&env),
+                    sub_invokes: &[],
+                }],
+            },
+        }]);
+        client
+            .try_deposit(&from, &deal_id, &50i128)
+            .unwrap()
+            .unwrap();
+
+        env.mock_auths(&[MockAuth {
+            address: &operator,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "release",
+                args: (
+                    operator.clone(),
+                    deal_id.clone(),
+                    to.clone(),
+                    50i128,
+                    platform_addr.clone(),
+                    10i128,
+                    reporter_addr.clone(),
+                    5i128,
+                    Symbol::new(&env, "manual_admin"),
+                    String::from_str(&env, "x"),
+                )
+                    .into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        let err = client
+            .try_release(
+                &operator,
+                &deal_id,
+                &to,
+                &50i128,
+                &platform_addr,
+                &10i128,
+                &reporter_addr,
+                &5i128,
+                &Symbol::new(&env, "manual_admin"),
+                &String::from_str(&env, "x"),
+            )
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, ContractError::InvalidSplit);
+    }
+
+    #[test]
     fn unauthorized_release_rejected() {
         let env = Env::default();
         let (contract_id, client, _admin, _operator, token, token_admin, _rcpt) = setup(&env);
         let from = Address::generate(&env);
         let non_auth = Address::generate(&env);
         let to = Address::generate(&env);
+        let platform_addr = Address::generate(&env);
+        let reporter_addr = Address::generate(&env);
         let token_sac = StellarAssetClient::new(&env, &token);
         let deal_id = String::from_str(&env, "deal-4");
         env.mock_auths(&[MockAuth {
@@ -1529,6 +2088,11 @@ mod test {
                     non_auth.clone(),
                     deal_id.clone(),
                     to.clone(),
+                    50i128,
+                    platform_addr.clone(),
+                    0i128,
+                    reporter_addr.clone(),
+                    0i128,
                     Symbol::new(&env, "manual_admin"),
                     String::from_str(&env, "ext3"),
                 )
@@ -1541,6 +2105,11 @@ mod test {
                 &non_auth,
                 &deal_id,
                 &to,
+                &50i128,
+                &platform_addr,
+                &0i128,
+                &reporter_addr,
+                &0i128,
                 &Symbol::new(&env, "manual_admin"),
                 &String::from_str(&env, "ext3"),
             )

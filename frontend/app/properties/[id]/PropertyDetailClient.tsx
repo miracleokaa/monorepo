@@ -57,8 +57,13 @@ import { apiPost } from "@/lib/api";
 import { VerificationBadge, VerificationStatus } from "@/components/properties/verification-badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ApartmentReviews } from "@/components/properties/ApartmentReviews";
+import PropertyPriceBreakdown from "@/components/properties/PropertyPriceBreakdown";
 import { Suspense } from "react";
 import { Loader2 } from "lucide-react";
+import { TrustIndicatorBar } from "@/components/properties/TrustIndicatorBar";
+import { InspectionReportAccordion } from "@/components/properties/InspectionReportAccordion";
+import { LandlordSnippet } from "@/components/properties/LandlordSnippet";
+import useAuthStore from "@/store/useAuthStore";
 
 const properties = allProperties;
 
@@ -102,6 +107,7 @@ export default function PropertyDetailClient({
   propertyId,
 }: PropertyDetailClientProps) {
   const router = useRouter();
+  const { isAuthenticated } = useAuthStore();
   const [isFavorite, setIsFavorite] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [showLightbox, setShowLightbox] = useState(false);
@@ -198,8 +204,10 @@ export default function PropertyDetailClient({
     }).format(price);
   };
 
-  const minDeposit = property.price * 0.2; // 20% minimum deposit
-  const amountToFinance = property.price - minDeposit;
+  const installmentPrice = (property as any).installmentBasePriceNgn ?? property.price;
+  const outrightPrice = (property as any).outrightPriceNgn ?? property.price;
+  const minDeposit = installmentPrice * 0.2;
+  const amountToFinance = installmentPrice - minDeposit;
   const inspectionFee = amountToFinance * 0.075;
   const monthlyPayment = Math.round(
     (amountToFinance + inspectionFee) / paymentMonths,
@@ -475,6 +483,21 @@ export default function PropertyDetailClient({
                 </div>
               </div>
 
+              {/* Trust Indicators Bar */}
+              <TrustIndicatorBar
+                landlordKyc={property.landlord?.verified ?? false}
+                inspectionPass={
+                  (property as any).inspectionReport
+                    ? {
+                        date: (property as any).inspectionReport.date,
+                        inspectorName: (property as any).inspectionReport.inspectorName,
+                      }
+                    : null
+                }
+                whistleblowerCleared={!!property.whistleblower}
+                verificationStatus={(property as any).verificationStatus}
+              />
+
               {/* Description */}
               <div className="border-3 border-foreground bg-card p-4 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] sm:p-6">
                 <h2 className="font-mono text-lg font-bold mb-3 sm:text-xl sm:mb-4">
@@ -515,6 +538,15 @@ export default function PropertyDetailClient({
 
               {/* Amenities Legend */}
               <AmenitiesLegend />
+
+              {/* Inspection Report Accordion */}
+              <InspectionReportAccordion 
+                report={(property as any).inspectionReport ? {
+                  overallGrade: (property as any).inspectionReport.overallGrade,
+                  roomConditions: (property as any).inspectionReport.roomConditions,
+                  photos: (property as any).inspectionReport.photos || (property.images.length > 2 ? [property.images[0].url, property.images[1].url].filter(Boolean) as string[] : [])
+                } : null}
+              />
 
               {/* Room Gallery */}
               <div className="border-3 border-foreground bg-card p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
@@ -579,14 +611,36 @@ export default function PropertyDetailClient({
               <div className="sticky top-24 space-y-6">
                 {/* Pricing Card */}
                 <div className="border-3 border-foreground bg-card p-4 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] sm:p-6">
-                  <div className="mb-4">
-                    <p className="text-xs text-muted-foreground sm:text-sm">
-                      Annual Rent
-                    </p>
-                    <p className="font-mono text-2xl font-black sm:text-3xl">
-                      {formatPrice(property.price)}
-                    </p>
-                  </div>
+                  {(property as any).outrightPriceNgn && (property as any).installmentBasePriceNgn ? (
+                    <div className="mb-4 space-y-2">
+                      <div>
+                        <p className="text-xs text-muted-foreground sm:text-sm">
+                          Installment Price
+                        </p>
+                        <p className="font-mono text-xl font-black sm:text-2xl">
+                          {formatPrice((property as any).installmentBasePriceNgn)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          or{" "}
+                          <span className="font-mono font-bold text-secondary">
+                            {formatPrice((property as any).outrightPriceNgn)}
+                          </span>{" "}
+                          outright
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-4">
+                      <p className="text-xs text-muted-foreground sm:text-sm">
+                        Annual Rent
+                      </p>
+                      <p className="font-mono text-2xl font-black sm:text-3xl">
+                        {formatPrice(property.price)}
+                      </p>
+                    </div>
+                  )}
 
                   <div className="border-t-3 border-dashed border-foreground/30 pt-4 mb-4">
                     <div className="flex items-center gap-2 mb-3">
@@ -633,12 +687,27 @@ export default function PropertyDetailClient({
                     </div>
                   </div>
 
+                  <PropertyPriceBreakdown
+                    outrightPriceNgn={(property as any).outrightPriceNgn}
+                    installmentBasePriceNgn={(property as any).installmentBasePriceNgn}
+                    annualRentNgn={property.price}
+                    paymentMonths={paymentMonths}
+                  />
+
                   {(property as any).verificationStatus === 'VERIFIED' ? (
-                    <Link href={`/calculator?amount=${property.price}`}>
-                      <Button className="w-full border-3 border-foreground bg-primary py-6 font-mono text-lg font-bold shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                        Apply Now
-                      </Button>
-                    </Link>
+                    isAuthenticated ? (
+                      <Link href={`/calculator?amount=${installmentPrice}`}>
+                        <Button className="w-full border-3 border-foreground bg-primary py-6 font-mono text-lg font-bold shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                          Apply Now
+                        </Button>
+                      </Link>
+                    ) : (
+                      <Link href="/login">
+                        <Button className="w-full border-3 border-foreground bg-primary py-6 font-mono text-lg font-bold shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                          Login to Apply
+                        </Button>
+                      </Link>
+                    )
                   ) : (
                     <TooltipProvider>
                       <Tooltip>
@@ -721,62 +790,15 @@ export default function PropertyDetailClient({
                 )}
 
                 {/* Landlord Info */}
-                <div className="border-3 border-foreground bg-card p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
-                  <h3 className="font-mono font-bold mb-4">Listed By</h3>
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="flex h-12 w-12 items-center justify-center border-2 border-foreground bg-muted font-mono font-bold">
-                      {property.landlord.name.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-bold">{property.landlord.name}</p>
-                      <span
-                        className={`mt-1 inline-flex items-center gap-1 border px-2 py-0.5 text-xs font-bold ${
-                          property.landlord.verified
-                            ? "border-secondary bg-secondary/15 text-secondary"
-                            : "border-muted-foreground/40 bg-muted text-muted-foreground"
-                        }`}
-                      >
-                        {property.landlord.verified ? (
-                          <>
-                            <CheckCircle className="h-3 w-3" /> Verified
-                            Landlord
-                          </>
-                        ) : (
-                          "Verification pending"
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <p className="flex justify-between">
-                      <span className="text-muted-foreground">
-                        Active Listings
-                      </span>
-                      <span className="font-bold">
-                        {property.landlord.listings}
-                      </span>
-                    </p>
-                    <p className="flex justify-between">
-                      <span className="text-muted-foreground">
-                        Response Time
-                      </span>
-                      <span className="font-bold">
-                        {property.landlord.responseTime}
-                      </span>
-                    </p>
-                  </div>
-                  <Link
-                    href={`/messages?contact=landlord&propertyId=${property.id}`}
-                  >
-                    <Button
-                      variant="outline"
-                      className="w-full mt-4 border-3 border-foreground bg-transparent py-5 font-bold shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] transition-all hover:translate-x-px hover:translate-y-px hover:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
-                    >
-                      <MessageSquare className="mr-2 h-5 w-5" /> Contact
-                      Landlord
-                    </Button>
-                  </Link>
-                </div>
+                <LandlordSnippet
+                  landlord={{
+                    name: property.landlord.name,
+                    verified: property.landlord.verified,
+                    listings: property.landlord.listings,
+                    responseTime: property.landlord.responseTime,
+                    listedSince: (property.landlord as any).listedSince,
+                  }}
+                />
 
                 {/* Report Listing Card */}
                 <div className="border-3 border-foreground bg-card p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
@@ -815,16 +837,18 @@ export default function PropertyDetailClient({
         >
           <button
             onClick={() => setShowLightbox(false)}
+            aria-label="Close image gallery"
             className="absolute right-4 top-4 flex h-12 w-12 items-center justify-center border-3 border-background bg-background text-foreground"
           >
-            <X className="h-6 w-6" />
+            <X className="h-6 w-6" aria-hidden />
           </button>
 
           <button
             onClick={prevImage}
+            aria-label="Previous image"
             className="absolute left-4 flex h-14 w-14 items-center justify-center border-3 border-background bg-background text-foreground"
           >
-            <ChevronLeft className="h-8 w-8" />
+            <ChevronLeft className="h-8 w-8" aria-hidden />
           </button>
 
           <div className="max-w-4xl w-full">
@@ -887,9 +911,10 @@ export default function PropertyDetailClient({
 
           <button
             onClick={nextImage}
+            aria-label="Next image"
             className="absolute right-4 flex h-14 w-14 items-center justify-center border-3 border-background bg-background text-foreground"
           >
-            <ChevronRight className="h-8 w-8" />
+            <ChevronRight className="h-8 w-8" aria-hidden />
           </button>
         </div>
       )}

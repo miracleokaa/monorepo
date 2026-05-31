@@ -22,6 +22,11 @@ members = [
   "epoch_rewards",
   "slashing_module",
   "stake_delegation",
+  "oracle_price_feeds",
+  "tenant_reputation",
+  "inspector_bond",
+  "rent_to_own",
+  "governance",
 ]
 
 [profile.release-with-logs]

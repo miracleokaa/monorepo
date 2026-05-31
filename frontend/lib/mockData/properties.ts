@@ -8,6 +8,8 @@ export const allProperties = [
     location: "Lekki Phase 1, Lagos",
     address: "15 Admiralty Way, Lekki Phase 1, Lagos",
     price: 3500000,
+    outrightPriceNgn: 3500000,
+    installmentBasePriceNgn: 3850000,
     beds: 3,
     baths: 3,
     sqm: 150,
@@ -40,6 +42,17 @@ export const allProperties = [
       verified: true,
       listings: 15,
       responseTime: "Within 24 hours",
+      listedSince: "2021",
+    },
+    inspectionReport: {
+      overallGrade: "A-",
+      date: "Oct 12, 2025",
+      inspectorName: "Jane Doe",
+      roomConditions: [
+        { room: "Living Room", grade: "A", notes: "Excellent condition, no visible flaws." },
+        { room: "Kitchen", grade: "B+", notes: "Minor scratches on countertop, otherwise fine." },
+        { room: "Master Bedroom", grade: "A-", notes: "Clean, walls recently painted." }
+      ]
     },
     whistleblower: {
       name: "Chiamaka Okonkwo",
@@ -54,6 +67,8 @@ export const allProperties = [
     location: "Wuse 2, Abuja",
     address: "Plot 42, Aminu Kano Crescent, Wuse 2, Abuja",
     price: 2800000,
+    outrightPriceNgn: 2800000,
+    installmentBasePriceNgn: 3080000,
     beds: 2,
     baths: 2,
     sqm: 120,
@@ -83,6 +98,17 @@ export const allProperties = [
       verified: true,
       listings: 20,
       responseTime: "Within 12 hours",
+      listedSince: "2022",
+    },
+    inspectionReport: {
+      overallGrade: "A",
+      date: "Nov 05, 2025",
+      inspectorName: "John Smith",
+      roomConditions: [
+        { room: "Living Room", grade: "A", notes: "Bright and spacious, perfect flooring." },
+        { room: "Kitchen", grade: "A-", notes: "Modern appliances, all fully functional." },
+        { room: "Bedroom", grade: "A", notes: "Immaculate condition." }
+      ]
     },
     whistleblower: {
       name: "Adanna Smith",
@@ -97,6 +123,8 @@ export const allProperties = [
     location: "Ikoyi, Lagos",
     address: "7 Bourdillon Road, Ikoyi, Lagos",
     price: 8500000,
+    outrightPriceNgn: 8500000,
+    installmentBasePriceNgn: 9350000,
     beds: 4,
     baths: 4,
     sqm: 300,
@@ -131,6 +159,17 @@ export const allProperties = [
       verified: true,
       listings: 8,
       responseTime: "Within 48 hours",
+      listedSince: "2020",
+    },
+    inspectionReport: {
+      overallGrade: "B+",
+      date: "Sep 20, 2025",
+      inspectorName: "Jane Doe",
+      roomConditions: [
+        { room: "Living Room", grade: "B+", notes: "Clean walls, very minor baseboard wear." },
+        { room: "Kitchen", grade: "A", notes: "Gourmet design, top-tier build quality." },
+        { room: "Bedrooms", grade: "B", notes: "Light wear on master bath door hinges." }
+      ]
     },
     whistleblower: {
       name: "Chioma Ukaegbu",
@@ -145,6 +184,8 @@ export const allProperties = [
     location: "Yaba, Lagos",
     address: "25 Herbert Macaulay Way, Yaba, Lagos",
     price: 1200000,
+    outrightPriceNgn: 1200000,
+    installmentBasePriceNgn: 1320000,
     beds: 1,
     baths: 1,
     sqm: 45,
@@ -172,6 +213,7 @@ export const allProperties = [
       verified: false,
       listings: 3,
       responseTime: "Within 48 hours",
+      listedSince: "2023",
     },
     whistleblower: {
       name: "Blessing Okafor",
@@ -186,6 +228,8 @@ export const allProperties = [
     location: "Victoria Island, Lagos",
     address: "18 Adeola Odeku Street, Victoria Island, Lagos",
     price: 5500000,
+    outrightPriceNgn: 5500000,
+    installmentBasePriceNgn: 6050000,
     beds: 3,
     baths: 3,
     sqm: 180,
@@ -216,6 +260,7 @@ export const allProperties = [
       verified: true,
       listings: 25,
       responseTime: "Within 6 hours",
+      listedSince: "2019",
     },
     whistleblower: {
       name: "Tunde Adeyemi",
@@ -230,6 +275,8 @@ export const allProperties = [
     location: "Gwarimpa, Abuja",
     address: "12 1st Avenue, Gwarimpa Estate, Abuja",
     price: 4200000,
+    outrightPriceNgn: 4200000,
+    installmentBasePriceNgn: 4620000,
     beds: 4,
     baths: 3,
     sqm: 220,
@@ -260,6 +307,17 @@ export const allProperties = [
       verified: true,
       listings: 20,
       responseTime: "Within 24 hours",
+      listedSince: "2021",
+    },
+    inspectionReport: {
+      overallGrade: "A-",
+      date: "Dec 01, 2025",
+      inspectorName: "John Smith",
+      roomConditions: [
+        { room: "Main Compound", grade: "A", notes: "Extremely spacious and well-secured." },
+        { room: "Living Room", grade: "A-", notes: "Nice high ceilings, clean walls." },
+        { room: "Kitchen", grade: "B+", notes: "Adequate cabinets and spacing." }
+      ]
     },
     whistleblower: {
       name: "Folake Adekunle",
@@ -274,6 +332,8 @@ export const allProperties = [
     location: "Ikeja GRA, Lagos",
     address: "8 Joel Ogunnaike Street, Ikeja GRA, Lagos",
     price: 2400000,
+    outrightPriceNgn: 2400000,
+    installmentBasePriceNgn: 2640000,
     beds: 2,
     baths: 2,
     sqm: 100,
@@ -302,6 +362,17 @@ export const allProperties = [
       verified: true,
       listings: 30,
       responseTime: "Within 2 hours",
+      listedSince: "2022",
+    },
+    inspectionReport: {
+      overallGrade: "A",
+      date: "Jan 15, 2026",
+      inspectorName: "Jane Doe",
+      roomConditions: [
+        { room: "Living Room", grade: "A", notes: "Perfect state, elegant lighting." },
+        { room: "Kitchen", grade: "A", notes: "Fully upgraded fittings, spotless." },
+        { room: "Bedrooms", grade: "A-", notes: "Cozy and freshly painted." }
+      ]
     },
     whistleblower: {
       name: "Zainab Hassan",
@@ -316,6 +387,8 @@ export const allProperties = [
     location: "Banana Island, Lagos",
     address: "3 Banana Island Road, Ikoyi, Lagos",
     price: 15000000,
+    outrightPriceNgn: 15000000,
+    installmentBasePriceNgn: 16500000,
     beds: 5,
     baths: 5,
     sqm: 400,
@@ -350,6 +423,17 @@ export const allProperties = [
       verified: true,
       listings: 3,
       responseTime: "Within 2 hours",
+      listedSince: "2021",
+    },
+    inspectionReport: {
+      overallGrade: "A+",
+      date: "Feb 10, 2026",
+      inspectorName: "Jane Doe",
+      roomConditions: [
+        { room: "Grand Salon", grade: "A+", notes: "Stunning panoramic layout, flawless execution." },
+        { room: "Chef Kitchen", grade: "A+", notes: "Sub-Zero appliances, state-of-the-art." },
+        { room: "Spa Bathroom", grade: "A+", notes: "Luxury marble finishes, brand new feel." }
+      ]
     },
     whistleblower: {
       name: "Ngozi Eze",
